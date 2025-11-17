@@ -1,7 +1,7 @@
 import pathlib
 
 ### Task parameters
-DATA_DIR = '<put your data dir here>'
+DATA_DIR = '/home/kelly_lucy/Desktop/manipulation_project/Manipulation-Final-Project/src/teleop_data'
 SIM_TASK_CONFIGS = {
     'sim_transfer_cube_scripted':{
         'dataset_dir': DATA_DIR + '/sim_transfer_cube_scripted',
@@ -30,10 +30,17 @@ SIM_TASK_CONFIGS = {
         'episode_len': 500,
         'camera_names': ['top']
     },
+
+    'sim_insertion_human': {
+        'dataset_dir': DATA_DIR + '/open_drawer',
+        'num_episodes': 50,
+        'episode_len': 400,
+        'camera_names': ['camera0', 'camera1']
+    },
 }
 
 ### Simulation envs fixed constants
-DT = 0.02
+DT = 0.05
 JOINT_NAMES = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate"]
 START_ARM_POSE = [0, -0.96, 1.16, 0, -0.3, 0, 0.02239, -0.02239,  0, -0.96, 1.16, 0, -0.3, 0, 0.02239, -0.02239]
 

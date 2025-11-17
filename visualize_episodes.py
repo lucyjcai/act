@@ -10,7 +10,7 @@ from constants import DT
 import IPython
 e = IPython.embed
 
-JOINT_NAMES = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate"]
+JOINT_NAMES = ["joint0", "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 STATE_NAMES = JOINT_NAMES + ["gripper"]
 
 def load_hdf5(dataset_dir, dataset_name):
@@ -41,39 +41,113 @@ def main(args):
     # visualize_timestamp(t_list, dataset_path) # TODO addn timestamp back
 
 
+# def save_videos(video, dt, video_path=None):
+#     if isinstance(video, list):
+#         cam_names = list(video[0].keys())
+#         h, w, _ = video[0][cam_names[0]].shape
+#         w = w * len(cam_names)
+#         fps = int(1/dt)
+#         out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+#         for ts, image_dict in enumerate(video):
+#             images = []
+#             for cam_name in cam_names:
+#                 image = image_dict[cam_name]
+#                 image = image[:, :, [2, 1, 0]] # swap B and R channel
+#                 images.append(image)
+#             images = np.concatenate(images, axis=1)
+#             out.write(images)
+#         out.release()
+#         print(f'Saved video to: {video_path}')
+#     elif isinstance(video, dict):
+#         cam_names = list(video.keys())
+#         all_cam_videos = []
+#         for cam_name in cam_names:
+#             all_cam_videos.append(video[cam_name])
+#         all_cam_videos = np.concatenate(all_cam_videos, axis=2) # width dimension
+
+#         n_frames, h, w, _ = all_cam_videos.shape
+#         fps = int(1 / dt)
+#         out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+#         for t in range(n_frames):
+#             image = all_cam_videos[t]
+#             image = image[:, :, [2, 1, 0]]  # swap B and R channel
+#             out.write(image)
+#         out.release()
+#         print(f'Saved video to: {video_path}')
+
+# Save videos as .avi instead of .mp4 because mp4 wasn't playing for some reason
 def save_videos(video, dt, video_path=None):
-    if isinstance(video, list):
-        cam_names = list(video[0].keys())
-        h, w, _ = video[0][cam_names[0]].shape
-        w = w * len(cam_names)
-        fps = int(1/dt)
-        out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-        for ts, image_dict in enumerate(video):
-            images = []
-            for cam_name in cam_names:
-                image = image_dict[cam_name]
-                image = image[:, :, [2, 1, 0]] # swap B and R channel
-                images.append(image)
-            images = np.concatenate(images, axis=1)
-            out.write(images)
-        out.release()
-        print(f'Saved video to: {video_path}')
-    elif isinstance(video, dict):
+    fps = int(1 / dt)
+    fourcc = cv2.VideoWriter_fourcc(*'MJPG')  # very compatible codec
+
+    if isinstance(video, dict):
+        # dict: {cam_name: (T, H, W, 3)}
         cam_names = list(video.keys())
-        all_cam_videos = []
-        for cam_name in cam_names:
-            all_cam_videos.append(video[cam_name])
-        all_cam_videos = np.concatenate(all_cam_videos, axis=2) # width dimension
+        all_cam_videos = [video[cam_name] for cam_name in cam_names]
+        # concat along width dimension (axis=2)
+        all_cam_videos = np.concatenate(all_cam_videos, axis=2)  # (T, H, W_total, 3)
 
         n_frames, h, w, _ = all_cam_videos.shape
-        fps = int(1 / dt)
-        out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+
+        if video_path is None:
+            video_path = "episode_video.avi"
+        else:
+            # force .avi for MJPG
+            root, _ = os.path.splitext(video_path)
+            video_path = root + ".avi"
+
+        out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
+        if not out.isOpened():
+            raise RuntimeError(f"Failed to open VideoWriter for {video_path}")
+
         for t in range(n_frames):
-            image = all_cam_videos[t]
-            image = image[:, :, [2, 1, 0]]  # swap B and R channel
-            out.write(image)
+            img = all_cam_videos[t]
+
+            if img.dtype != np.uint8:
+                img = img.astype(np.uint8)
+
+            # ensure 3 channels, drop alpha if needed
+            img = img[:, :, :3]
+
+            # OpenCV expects BGR
+            img = img[:, :, [2, 1, 0]]  # RGB -> BGR
+
+            out.write(img)
+
         out.release()
-        print(f'Saved video to: {video_path}')
+        print(f"Saved video to: {video_path}")
+
+    elif isinstance(video, list):
+        # list of dicts: [ {cam_name: frame}, ... ]
+        cam_names = list(video[0].keys())
+        h, w, _ = video[0][cam_names[0]].shape
+        total_w = w * len(cam_names)
+
+        if video_path is None:
+            video_path = "episode_video.avi"
+        else:
+            root, _ = os.path.splitext(video_path)
+            video_path = root + ".avi"
+
+        out = cv2.VideoWriter(video_path, fourcc, fps, (total_w, h))
+        if not out.isOpened():
+            raise RuntimeError(f"Failed to open VideoWriter for {video_path}")
+
+        for image_dict in video:
+            frames = []
+            for cam_name in cam_names:
+                img = image_dict[cam_name]
+                if img.dtype != np.uint8:
+                    img = img.astype(np.uint8)
+                img = img[:, :, :3]
+                img = img[:, :, [2, 1, 0]]  # RGB -> BGR
+                frames.append(img)
+
+            concat = np.concatenate(frames, axis=1)
+            out.write(concat)
+
+        out.release()
+        print(f"Saved video to: {video_path}")
 
 
 def visualize_joints(qpos_list, command_list, plot_path=None, ylim=None, label_overwrite=None):
@@ -90,7 +164,7 @@ def visualize_joints(qpos_list, command_list, plot_path=None, ylim=None, label_o
     fig, axs = plt.subplots(num_figs, 1, figsize=(w, h * num_figs))
 
     # plot joint state
-    all_names = [name + '_left' for name in STATE_NAMES] + [name + '_right' for name in STATE_NAMES]
+    all_names = STATE_NAMES
     for dim_idx in range(num_dim):
         ax = axs[dim_idx]
         ax.plot(qpos[:, dim_idx], label=label1)
