@@ -31,16 +31,17 @@ SIM_TASK_CONFIGS = {
         'camera_names': ['top']
     },
 
-    'sim_insertion_human': {
-        'dataset_dir': DATA_DIR + '/open_drawer',
+    'sim_open_drawer': {
+        'dataset_dir': DATA_DIR + '/sim_open_drawer',
         'num_episodes': 50,
         'episode_len': 400,
-        'camera_names': ['camera0', 'camera1']
+        'camera_names': ['camera0', 'camera1'],
+        'state_dim': 8
     },
 }
 
 ### Simulation envs fixed constants
-DT = 0.05
+DT = 0.05    # 20 Hz
 JOINT_NAMES = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate"]
 START_ARM_POSE = [0, -0.96, 1.16, 0, -0.3, 0, 0.02239, -0.02239,  0, -0.96, 1.16, 0, -0.3, 0, 0.02239, -0.02239]
 
