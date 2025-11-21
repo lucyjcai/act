@@ -34,7 +34,7 @@ SIM_TASK_CONFIGS = {
     'sim_open_drawer': {
         'dataset_dir': DATA_DIR + '/sim_open_drawer',
         'num_episodes': 50,
-        'episode_len': 400,
+        'episode_len': 200,
         'camera_names': ['camera0', 'camera1'],
         'state_dim': 8
     },
