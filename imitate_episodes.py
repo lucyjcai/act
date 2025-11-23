@@ -16,7 +16,102 @@ from utils import compute_dict_mean, set_seed, detach_dict # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
 from visualize_episodes import save_videos
 
-from sim_env import BOX_POSE
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent / "src"))
+from drake_env import DrakeEnv
+from pydrake.all import StartMeshcat
+
+scenario_string = """directives:
+# add robot
+- add_model:
+    name: iiwa
+    file: package://drake_models/iiwa_description/urdf/iiwa14_primitive_collision.urdf
+    default_joint_positions:
+      iiwa_joint_1: [-1.57]
+      iiwa_joint_2: [0.1]
+      iiwa_joint_3: [0]
+      iiwa_joint_4: [-1.2]
+      iiwa_joint_5: [0]
+      iiwa_joint_6: [1.6]
+      iiwa_joint_7: [0]
+- add_weld:
+    parent: world
+    child: iiwa::iiwa_link_0
+
+# add gripper
+- add_model:
+    name: wsg
+    file: package://manipulation/hydro/schunk_wsg_50_with_tip.sdf
+- add_weld:
+    parent: iiwa::iiwa_link_7
+    child: wsg::body
+    X_PC:
+        translation: [0, 0, 0.09]
+        rotation: !Rpy { deg: [90, 0, 90]}
+
+# add camera mounted to world 
+- add_frame:
+    name: camera0_origin
+    X_PF:
+        base_frame: world
+        rotation: !Rpy { deg: [270, 0.0, 90.0]}
+        translation: [1.2, -0.5, 0.5]
+- add_model:
+    name: camera0
+    file: package://manipulation/camera_box.sdf
+- add_weld:
+    parent: camera0_origin
+    child: camera0::base
+
+# add camera mounted to robot wrist
+- add_frame:
+    name: camera_wrist
+    X_PF:
+      base_frame: iiwa::iiwa_link_7
+      translation: [-0.05, 0, 0.1]   # 10 cm ahead of wrist
+      rotation: !Rpy {deg: [0, 00, -90]}
+- add_model:
+    name: camera1
+    file: package://manipulation/camera_box.sdf
+- add_weld:
+    parent: iiwa::camera_wrist
+    child: camera1::base
+
+# add cabinet
+- add_model:
+    name: cabinet
+    file: package://drake_models/manipulation_station/cupboard.sdf
+- add_frame:
+    name: cabinet_origin
+    X_PF:
+      base_frame: world
+      translation: [0, -1.0, 0.4]    # x, y, z in meters
+      rotation: !Rpy { deg: [0, 0, 90]}  # roll, pitch, yaw
+- add_weld:
+    parent: cabinet_origin
+    child: cabinet::cupboard_body
+
+cameras:
+  camera0:
+    name: camera0
+    depth: True
+    X_PB:
+      base_frame: camera0::base
+  camera1:
+    name: camera1
+    depth: True
+    X_PB:
+      base_frame: camera1::base
+
+model_drivers:
+  iiwa: !IiwaDriver
+    control_mode: position_only 
+    hand_model_name: wsg
+  wsg: !SchunkWsgDriver {}
+"""
+
+# from sim_env import BOX_POSE
 
 import IPython
 e = IPython.embed
@@ -185,8 +280,11 @@ def eval_bc(config, ckpt_name, save_episode=True):
         env = make_real_env(init_node=True)
         env_max_reward = 0
     else:
-        from sim_env import make_sim_env
-        env = make_sim_env(task_name)
+        meshcat = StartMeshcat()
+        env = DrakeEnv(scenario_string, meshcat=meshcat)
+
+        # from sim_env import make_sim_env
+        # env = make_sim_env(task_name)
         env_max_reward = env.task.max_reward
 
     query_frequency = policy_config['num_queries']
@@ -202,10 +300,10 @@ def eval_bc(config, ckpt_name, save_episode=True):
     for rollout_id in range(num_rollouts):
         rollout_id += 0
         ### set task
-        if 'sim_transfer_cube' in task_name:
-            BOX_POSE[0] = sample_box_pose() # used in sim reset
-        elif 'sim_insertion' in task_name:
-            BOX_POSE[0] = np.concatenate(sample_insertion_pose()) # used in sim reset
+        # if 'sim_transfer_cube' in task_name:
+        #     BOX_POSE[0] = sample_box_pose() # used in sim reset
+        # elif 'sim_insertion' in task_name:
+        #     BOX_POSE[0] = np.concatenate(sample_insertion_pose()) # used in sim reset
 
         ts = env.reset()
 
