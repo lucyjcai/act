@@ -281,7 +281,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
         env_max_reward = 0
     else:
         meshcat = StartMeshcat()
-        env = DrakeEnv(scenario_string, 150, 30, 5, meshcat=meshcat)
+        env = DrakeEnv(scenario_string, meshcat=meshcat)
 
         # from sim_env import make_sim_env
         # env = make_sim_env(task_name)
