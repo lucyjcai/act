@@ -256,7 +256,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
     max_timesteps = config['episode_len']
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
-    onscreen_cam = 'angle'
+    onscreen_cam = 'camera0'
 
     # load policy and stats
     ckpt_path = os.path.join(ckpt_dir, ckpt_name)
@@ -281,7 +281,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
         env_max_reward = 0
     else:
         meshcat = StartMeshcat()
-        env = DrakeEnv(scenario_string, meshcat=meshcat)
+        env = DrakeEnv(scenario_string, 150, 30, 5, meshcat=meshcat)
 
         # from sim_env import make_sim_env
         # env = make_sim_env(task_name)
@@ -294,7 +294,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
     max_timesteps = int(max_timesteps * 1) # may increase for real-world tasks
 
-    num_rollouts = 50
+    num_rollouts = 15
     episode_returns = []
     highest_rewards = []
     for rollout_id in range(num_rollouts):
@@ -310,7 +310,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
         ### onscreen render
         if onscreen_render:
             ax = plt.subplot()
-            plt_img = ax.imshow(env._physics.render(height=480, width=640, camera_id=onscreen_cam))
+            plt_img = ax.imshow(env._physics().render(camera_id=onscreen_cam, height=480, width=640))
             plt.ion()
 
         ### evaluation loop
@@ -326,7 +326,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
             for t in range(max_timesteps):
                 ### update onscreen render and wait for DT
                 if onscreen_render:
-                    image = env._physics.render(height=480, width=640, camera_id=onscreen_cam)
+                    image = env._physics().render(camera_id=onscreen_cam, height=480, width=640)
                     plt_img.set_data(image)
                     plt.pause(DT)
 
