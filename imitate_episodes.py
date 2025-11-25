@@ -69,7 +69,7 @@ scenario_string = """directives:
     name: camera_wrist
     X_PF:
       base_frame: iiwa::iiwa_link_7
-      translation: [-0.05, 0, 0.1]   # 10 cm ahead of wrist
+      translation: [-0.05, 0, 0.07]   # 7 cm ahead of wrist
       rotation: !Rpy {deg: [0, 00, -90]}
 - add_model:
     name: camera1
@@ -115,6 +115,8 @@ cameras:
   camera1:
     name: camera1
     depth: True
+    focal: !FovDegrees
+        x: 110   # horizontal FOV in degrees
     X_PB:
       base_frame: camera1::base
   camera2:
