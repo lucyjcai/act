@@ -78,6 +78,20 @@ scenario_string = """directives:
     parent: iiwa::camera_wrist
     child: camera1::base
 
+# add camera mounted to world pointing top down
+- add_frame:
+    name: camera2_origin
+    X_PF:
+        base_frame: world
+        rotation: !Rpy { deg: [0, 180.0, 0.0]}
+        translation: [0, -0.5, 3.0]
+- add_model:
+    name: camera2
+    file: package://manipulation/camera_box.sdf
+- add_weld:
+    parent: camera2_origin
+    child: camera2::base
+
 # add cabinet
 - add_model:
     name: cabinet
@@ -103,6 +117,11 @@ cameras:
     depth: True
     X_PB:
       base_frame: camera1::base
+  camera2:
+    name: camera2
+    depth: True
+    X_PB:
+      base_frame: camera2::base
 
 model_drivers:
   iiwa: !IiwaDriver
