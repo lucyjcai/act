@@ -15,122 +15,174 @@ from utils import sample_box_pose, sample_insertion_pose # robot functions
 from utils import compute_dict_mean, set_seed, detach_dict # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
 from visualize_episodes import save_videos
-
+from datetime import datetime
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent / "src"))
 from drake_env import DrakeEnv
 from pydrake.all import StartMeshcat
+import h5py
+import os
+import random
 
-scenario_string = """directives:
-# add robot
-- add_model:
-    name: iiwa
-    file: package://drake_models/iiwa_description/urdf/iiwa14_primitive_collision.urdf
-    default_joint_positions:
-      iiwa_joint_1: [-1.57]
-      iiwa_joint_2: [0.1]
-      iiwa_joint_3: [0]
-      iiwa_joint_4: [-1.2]
-      iiwa_joint_5: [0]
-      iiwa_joint_6: [1.6]
-      iiwa_joint_7: [0]
-- add_weld:
-    parent: world
-    child: iiwa::iiwa_link_0
+checkpoint_marker = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 
-# add gripper
-- add_model:
-    name: wsg
-    file: package://manipulation/hydro/schunk_wsg_50_with_tip.sdf
-- add_weld:
-    parent: iiwa::iiwa_link_7
-    child: wsg::body
-    X_PC:
-        translation: [0, 0, 0.09]
-        rotation: !Rpy { deg: [90, 0, 90]}
+def get_random_drawer_pose(
+    r_min=0.40,      
+    r_max=0.45,     
+    fov_deg=90, 
+    face_noise_deg=30,
+    cabinet_depth=1,
+    cabinet_width=1,    
+):
+    """
+    Returns (x, y, yaw_degrees)
+    """
+    r = random.uniform(r_min, r_max)
+    print(r)
+    theta_rad = np.radians(random.uniform(270-fov_deg/2, 270+fov_deg/2))
+    
+    x = r * np.cos(theta_rad)
+    y = r * np.sin(theta_rad)
+    
+    
+    # Adjust angle b/w drawer origin is bottom right corner of cabinet
+    perfect_yaw_rad = np.arctan2(-y, -x)
+    yaw_rad = perfect_yaw_rad + np.radians(random.uniform(-face_noise_deg, face_noise_deg))
+    
+    local_center_x = cabinet_depth / 2.0
+    local_center_y = cabinet_width / 2.0
+    
+    c_yaw = np.cos(yaw_rad)
+    s_yaw = np.sin(yaw_rad)
+    
+    world_offset_x = local_center_x * c_yaw - local_center_y * s_yaw
+    world_offset_y = local_center_x * s_yaw + local_center_y * c_yaw
+    
+    final_origin_x = x - world_offset_x
+    final_origin_y = y - world_offset_y
+    
+    return final_origin_x, final_origin_y, np.degrees(yaw_rad)
+    
+def generate_scenario_string(drawer_name = "label62", **kwargs) -> str:
+    # drawer_urdf_path = f"{Path.cwd()}/../src/urdf/custom/output/{drawer_name}.urdf"
+    drawer_urdf_path = f"/home/kelly_lucy/Desktop/manipulation_project/Manipulation-Final-Project/src/urdf/custom/output/{drawer_name}.urdf"
+    
+    x, y, yaw = get_random_drawer_pose(**kwargs)
+    
+    scenario_string = f"""
+    directives:
+    # add robot
+    - add_model:
+        name: iiwa
+        file: package://drake_models/iiwa_description/urdf/iiwa14_primitive_collision.urdf
+        default_joint_positions:
+            iiwa_joint_1: [-1.57]
+            iiwa_joint_2: [0.1]
+            iiwa_joint_3: [0]
+            iiwa_joint_4: [-1.2]
+            iiwa_joint_5: [0]
+            iiwa_joint_6: [1.6]
+            iiwa_joint_7: [0]
+    - add_weld:
+        parent: world
+        child: iiwa::iiwa_link_0
 
-# add camera mounted to world 
-- add_frame:
-    name: camera0_origin
-    X_PF:
-        base_frame: world
-        rotation: !Rpy { deg: [270, 0.0, 90.0]}
-        translation: [1.2, -0.5, 0.5]
-- add_model:
-    name: camera0
-    file: package://manipulation/camera_box.sdf
-- add_weld:
-    parent: camera0_origin
-    child: camera0::base
+    # add gripper
+    - add_model:
+        name: wsg
+        file: package://manipulation/hydro/schunk_wsg_50_with_tip.sdf
+    - add_weld:
+        parent: iiwa::iiwa_link_7
+        child: wsg::body
+        X_PC:
+            translation: [0, 0, 0.09]
+            rotation: !Rpy {{ deg: [90, 0, 90]}}
 
-# add camera mounted to robot wrist
-- add_frame:
-    name: camera_wrist
-    X_PF:
-      base_frame: iiwa::iiwa_link_7
-      translation: [-0.05, 0, 0.07]   # 7 cm ahead of wrist
-      rotation: !Rpy {deg: [0, 00, -90]}
-- add_model:
-    name: camera1
-    file: package://manipulation/camera_box.sdf
-- add_weld:
-    parent: iiwa::camera_wrist
-    child: camera1::base
+    # add camera mounted to world 
+    - add_frame:
+        name: camera0_origin
+        X_PF:
+            base_frame: world
+            rotation: !Rpy {{ deg: [250, 0, 180.0]}}
+            translation: [0, 2, 1.4]
+    - add_model:
+        name: camera0
+        file: package://manipulation/camera_box.sdf
+    - add_weld:
+        parent: camera0_origin
+        child: camera0::base
 
-# add camera mounted to world pointing top down
-- add_frame:
-    name: camera2_origin
-    X_PF:
-        base_frame: world
-        rotation: !Rpy { deg: [0, 180.0, 0.0]}
-        translation: [0, -0.5, 3.0]
-- add_model:
-    name: camera2
-    file: package://manipulation/camera_box.sdf
-- add_weld:
-    parent: camera2_origin
-    child: camera2::base
+    # add camera mounted to robot wrist
+    - add_frame:
+        name: camera_wrist
+        X_PF:
+            base_frame: iiwa::iiwa_link_7
+            translation: [-0.05, 0, 0.07]   
+            rotation: !Rpy {{deg: [0, 0, -90]}}
+    - add_model:
+        name: camera1
+        file: package://manipulation/camera_box.sdf
+    - add_weld:
+        parent: iiwa::camera_wrist
+        child: camera1::base
 
-# add cabinet
-- add_model:
-    name: cabinet
-    file: package://drake_models/manipulation_station/cupboard.sdf
-- add_frame:
-    name: cabinet_origin
-    X_PF:
-      base_frame: world
-      translation: [0, -1.0, 0.4]    # x, y, z in meters
-      rotation: !Rpy { deg: [0, 0, 90]}  # roll, pitch, yaw
-- add_weld:
-    parent: cabinet_origin
-    child: cabinet::cupboard_body
+    # add camera mounted to world pointing top down
+    - add_frame:
+        name: camera2_origin
+        X_PF:
+            base_frame: world
+            rotation: !Rpy {{ deg: [0, 180.0, 0.0]}}
+            translation: [0, -0.5, 3.0]
+    - add_model:
+        name: camera2
+        file: package://manipulation/camera_box.sdf
+    - add_weld:
+        parent: camera2_origin
+        child: camera2::base
+        
+    # add random drawer
+    - add_model:
+        name: drawer
+        file: file://{drawer_urdf_path}
+    - add_frame:
+        name: drawer_origin
+        X_PF:
+            base_frame: world
+            translation: [{x}, {y}, 0]    
+            rotation: !Rpy {{ deg: [0, 0, {yaw}]}}  
+    - add_weld:
+        parent: drawer_origin
+        child: drawer::base_link
+        
+    cameras:
+        camera0:
+            name: camera0
+            depth: True
+            X_PB:
+                base_frame: camera0::base
+        camera1:
+            name: camera1
+            depth: True
+            focal: !FovDegrees
+                x: 110   # horizontal FOV in degrees
+            X_PB:
+                base_frame: camera1::base
+        camera2:
+            name: camera2
+            depth: True
+            X_PB:
+                base_frame: camera2::base
+    
+    model_drivers:
+        iiwa: !IiwaDriver
+            control_mode: position_only 
+            hand_model_name: wsg
+        wsg: !SchunkWsgDriver {{}}
+    """
+    return scenario_string
 
-cameras:
-  camera0:
-    name: camera0
-    depth: True
-    X_PB:
-      base_frame: camera0::base
-  camera1:
-    name: camera1
-    depth: True
-    focal: !FovDegrees
-        x: 110   # horizontal FOV in degrees
-    X_PB:
-      base_frame: camera1::base
-  camera2:
-    name: camera2
-    depth: True
-    X_PB:
-      base_frame: camera2::base
-
-model_drivers:
-  iiwa: !IiwaDriver
-    control_mode: position_only 
-    hand_model_name: wsg
-  wsg: !SchunkWsgDriver {}
-"""
+scenario_string = generate_scenario_string()
 
 # from sim_env import BOX_POSE
 
@@ -230,6 +282,7 @@ def main(args):
     best_epoch, min_val_loss, best_state_dict = best_ckpt_info
 
     # save best checkpoint
+
     ckpt_path = os.path.join(ckpt_dir, f'policy_best.ckpt')
     torch.save(best_state_dict, ckpt_path)
     print(f'Best ckpt, val loss {min_val_loss:.6f} @ epoch{best_epoch}')
@@ -264,10 +317,18 @@ def get_image(ts, camera_names):
     curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
     return curr_image
 
+WSG_MIN = 0.0
+WSG_MAX = 0.1
+
+def unnormalize_wsg(norm_width):
+    return WSG_MIN + norm_width * (WSG_MAX - WSG_MIN)
+
 
 def eval_bc(config, ckpt_name, save_episode=True):
     set_seed(1000)
     ckpt_dir = config['ckpt_dir']
+    ckpt_dir = ckpt_dir + f"/{checkpoint_marker}"
+    os.makedirs(ckpt_dir, exist_ok=True)
     state_dim = config['state_dim']
     real_robot = config['real_robot']
     policy_class = config['policy_class']
@@ -277,7 +338,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
     max_timesteps = config['episode_len']
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
-    onscreen_cam = 'camera0'
+    onscreen_cam = 'camera2'
 
     # load policy and stats
     ckpt_path = os.path.join(ckpt_dir, ckpt_name)
@@ -387,6 +448,10 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 ### post-process actions
                 raw_action = raw_action.squeeze(0).cpu().numpy()
                 action = post_process(raw_action)
+                 ## unnormalize the gripper values 
+                gripper_position = action[-1]
+                unnormalized_gripper_position = unnormalize_wsg(gripper_position)
+                action[-1] = unnormalized_gripper_position
                 target_qpos = action
 
                 ### step the environment
@@ -442,6 +507,8 @@ def forward_pass(data, policy):
 def train_bc(train_dataloader, val_dataloader, config):
     num_epochs = config['num_epochs']
     ckpt_dir = config['ckpt_dir']
+    ckpt_dir = ckpt_dir + f"/{checkpoint_marker}"
+    os.makedirs(ckpt_dir, exist_ok=True)
     seed = config['seed']
     policy_class = config['policy_class']
     policy_config = config['policy_config']
