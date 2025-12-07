@@ -25,31 +25,73 @@ import h5py
 import os
 import random
 
+def snapshot_params(model, only_trainable=False):
+    """
+    Returns a dict: name -> cloned tensor
+    """
+    snap = {}
+    for name, p in model.named_parameters():
+        if only_trainable and not p.requires_grad:
+            continue
+        snap[name] = p.detach().clone().cpu()
+    return snap
+
+
+def compare_param_change(before, after, atol=0):
+    """
+    Computes:
+    - % of parameters that changed (by element count)
+    - mean absolute change over all compared params
+    """
+    total_elems = 0
+    changed_elems = 0
+    mean_deltas = []
+
+    for k in before:
+        b = before[k]
+        a = after[k]
+        diff = (a - b).abs()
+        total_elems += diff.numel()
+        changed_elems += (diff > atol).sum().item()
+        mean_deltas.append(diff.mean().item())
+
+    pct_changed = 100.0 * changed_elems / total_elems
+    mean_delta = float(np.mean(mean_deltas))
+
+    return pct_changed, mean_delta
+
+
 checkpoint_marker = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 
+DRAWER_CONFIGS = {
+    "label53": {"handle_label": "handle5", "lambda": 0.00004, "kp_null": 1},
+    "label62": {"handle_label": "handle3", "lambda": 0.004, "kp_null": 5},
+    "label31": {"handle_label": "handle3","lambda": 0.0004, "kp_null": 1.5},
+    "label55": {"handle_label": "handle7","lambda": 0.00001, "kp_null": 1}
+}
+
 def get_random_drawer_pose(
-    r_min=0.40,      
-    r_max=0.45,     
-    fov_deg=90, 
-    face_noise_deg=30,
+    radius=0.35,
+    fov_deg=45,
     cabinet_depth=1,
-    cabinet_width=1,    
+    cabinet_width=1,
 ):
     """
     Returns (x, y, yaw_degrees)
+    Randomness ONLY comes from fov sampling.
     """
-    r = random.uniform(r_min, r_max)
-    print(r)
-    theta_rad = np.radians(random.uniform(270-fov_deg/2, 270+fov_deg/2))
-    
-    x = r * np.cos(theta_rad)
-    y = r * np.sin(theta_rad)
-    
-    
-    # Adjust angle b/w drawer origin is bottom right corner of cabinet
-    perfect_yaw_rad = np.arctan2(-y, -x)
-    yaw_rad = perfect_yaw_rad + np.radians(random.uniform(-face_noise_deg, face_noise_deg))
-    
+
+    # Random only in FOV angle
+    theta_rad = np.radians(random.uniform(270 - fov_deg/2, 270 + fov_deg/2))
+
+    # Convert polar -> Cartesian
+    x = radius * np.cos(theta_rad)
+    y = radius * np.sin(theta_rad)
+
+    # Perfect yaw (no face noise)
+    yaw_rad = np.arctan2(-y, -x)
+
+    # Cabinet center offset (deterministic)
     local_center_x = cabinet_depth / 2.0
     local_center_y = cabinet_width / 2.0
     
@@ -63,9 +105,8 @@ def get_random_drawer_pose(
     final_origin_y = y - world_offset_y
     
     return final_origin_x, final_origin_y, np.degrees(yaw_rad)
-    
-def generate_scenario_string(drawer_name = "label62", **kwargs) -> str:
-    # drawer_urdf_path = f"{Path.cwd()}/../src/urdf/custom/output/{drawer_name}.urdf"
+
+def generate_scenario_string(drawer_name = "label53", **kwargs) -> str:
     drawer_urdf_path = f"/home/kelly_lucy/Desktop/manipulation_project/Manipulation-Final-Project/src/urdf/custom/output/{drawer_name}.urdf"
     
     x, y, yaw = get_random_drawer_pose(**kwargs)
@@ -182,7 +223,8 @@ def generate_scenario_string(drawer_name = "label62", **kwargs) -> str:
     """
     return scenario_string
 
-scenario_string = generate_scenario_string()
+
+# scenario_string = generate_scenario_string(drawer_name="label31", fov_deg=0, face_noise_deg=0)
 
 # from sim_env import BOX_POSE
 
@@ -233,7 +275,11 @@ def main(args):
                          'dec_layers': dec_layers,
                          'nheads': nheads,
                          'camera_names': camera_names,
-                         'state_dim': state_dim
+                         'state_dim': state_dim,
+                         'load_pretrain': args['load_pretrain'],
+                         'ckpt_dir': ckpt_dir,
+                         'seed': args['seed'],
+                         'use_lora': not args['eval'],
                          }
     elif policy_class == 'CNNMLP':
         policy_config = {'lr': args['lr'], 'lr_backbone': lr_backbone, 'backbone' : backbone, 'num_queries': 1,
@@ -254,11 +300,13 @@ def main(args):
         'seed': args['seed'],
         'temporal_agg': args['temporal_agg'],
         'camera_names': camera_names,
-        'real_robot': not is_sim
+        'real_robot': not is_sim,
+        'load_pretrain': args['load_pretrain']
     }
 
     if is_eval:
-        ckpt_names = [f'policy_best.ckpt']
+        # ckpt_names = [f'policy_pre_lora_finetune_seed_0.ckpt']
+        ckpt_names = [f'policy_pre_lora_nolora_seed_0.ckpt']
         results = []
         for ckpt_name in ckpt_names:
             success_rate, avg_return = eval_bc(config, ckpt_name, save_episode=True)
@@ -268,6 +316,9 @@ def main(args):
             print(f'{ckpt_name}: {success_rate=} {avg_return=}')
         print()
         exit()
+
+    # ckpt_dir += f"/{checkpoint_marker}"
+    os.makedirs(ckpt_dir, exist_ok=True)
 
     train_dataloader, val_dataloader, stats, _ = load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val)
 
@@ -327,8 +378,6 @@ def unnormalize_wsg(norm_width):
 def eval_bc(config, ckpt_name, save_episode=True):
     set_seed(1000)
     ckpt_dir = config['ckpt_dir']
-    ckpt_dir = ckpt_dir + f"/{checkpoint_marker}"
-    os.makedirs(ckpt_dir, exist_ok=True)
     state_dim = config['state_dim']
     real_robot = config['real_robot']
     policy_class = config['policy_class']
@@ -343,7 +392,13 @@ def eval_bc(config, ckpt_name, save_episode=True):
     # load policy and stats
     ckpt_path = os.path.join(ckpt_dir, ckpt_name)
     policy = make_policy(policy_class, policy_config)
-    loading_status = policy.load_state_dict(torch.load(ckpt_path))
+
+    state = torch.load(ckpt_path)
+    # If this is a pure DETRVAE checkpoint (no LoRA) and LoRA is disabled, load into inner model
+    if hasattr(policy, "use_lora") and not policy.use_lora:
+        loading_status = policy.model.load_state_dict(state)
+    else:
+        loading_status = policy.load_state_dict(state)
     print(loading_status)
     policy.cuda()
     policy.eval()
@@ -363,11 +418,10 @@ def eval_bc(config, ckpt_name, save_episode=True):
         env_max_reward = 0
     else:
         meshcat = StartMeshcat()
-        env = DrakeEnv(scenario_string, meshcat=meshcat)
 
         # from sim_env import make_sim_env
         # env = make_sim_env(task_name)
-        env_max_reward = env.task.max_reward
+        env_max_reward = 0
 
     query_frequency = policy_config['num_queries']
     if temporal_agg:
@@ -376,10 +430,12 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
     max_timesteps = int(max_timesteps * 1) # may increase for real-world tasks
 
-    num_rollouts = 15
+    num_rollouts = 10
     episode_returns = []
     highest_rewards = []
     for rollout_id in range(num_rollouts):
+        scenario_string = generate_scenario_string(drawer_name="label31", fov_deg=45)
+        env = DrakeEnv(scenario_string, meshcat=meshcat)
         rollout_id += 0
         ### set task
         # if 'sim_transfer_cube' in task_name:
@@ -474,8 +530,8 @@ def eval_bc(config, ckpt_name, save_episode=True):
         highest_rewards.append(episode_highest_reward)
         print(f'Rollout {rollout_id}\n{episode_return=}, {episode_highest_reward=}, {env_max_reward=}, Success: {episode_highest_reward==env_max_reward}')
 
-        if save_episode:
-            save_videos(image_list, DT, video_path=os.path.join(ckpt_dir, f'video{rollout_id}.mp4'))
+        # if save_episode:
+        #     save_videos(image_list, DT, video_path=os.path.join(ckpt_dir, f'epoch0_drawer62_video{rollout_id}.mp4'))
 
     success_rate = np.mean(np.array(highest_rewards) == env_max_reward)
     avg_return = np.mean(episode_returns)
@@ -507,8 +563,6 @@ def forward_pass(data, policy):
 def train_bc(train_dataloader, val_dataloader, config):
     num_epochs = config['num_epochs']
     ckpt_dir = config['ckpt_dir']
-    ckpt_dir = ckpt_dir + f"/{checkpoint_marker}"
-    os.makedirs(ckpt_dir, exist_ok=True)
     seed = config['seed']
     policy_class = config['policy_class']
     policy_config = config['policy_config']
@@ -516,8 +570,19 @@ def train_bc(train_dataloader, val_dataloader, config):
     set_seed(seed)
 
     policy = make_policy(policy_class, policy_config)
+
     policy.cuda()
     optimizer = make_optimizer(policy_class, policy)
+
+    # Save the model immediately after applying LoRA and loading any pretrained
+    pre_finetune_ckpt = os.path.join(
+        ckpt_dir, f"policy_pre_lora_finetune_seed_{seed}.ckpt"
+    )
+    torch.save(policy.state_dict(), pre_finetune_ckpt)
+    print(f"Saved pre-finetune LoRA checkpoint to {pre_finetune_ckpt}")
+
+    model_before = snapshot_params(policy.model, only_trainable=False)
+    lora_before  = snapshot_params(policy.model, only_trainable=True)
 
     train_history = []
     validation_history = []
@@ -564,10 +629,24 @@ def train_bc(train_dataloader, val_dataloader, config):
             summary_string += f'{k}: {v.item():.3f} '
         print(summary_string)
 
-        if epoch % 100 == 0:
+        if epoch % 50 == 0:
             ckpt_path = os.path.join(ckpt_dir, f'policy_epoch_{epoch}_seed_{seed}.ckpt')
             torch.save(policy.state_dict(), ckpt_path)
             plot_history(train_history, validation_history, epoch, ckpt_dir, seed)
+
+        if epoch == 0:
+            model_after = snapshot_params(policy.model, only_trainable=False)
+            lora_after  = snapshot_params(policy.model, only_trainable=True)
+
+            # ---- COMPUTE CHANGE STATS ----
+            pct_all, mean_all = compare_param_change(model_before, model_after)
+            pct_lora, mean_lora = compare_param_change(lora_before, lora_after)
+
+            print("\n===== PARAMETER CHANGE AFTER 1 EPOCH =====")
+            print(f"ALL params:   {pct_all:.4f}% elements changed | mean |Δ| = {mean_all:.6e}")
+            print(f"LoRA params:  {pct_lora:.4f}% elements changed | mean |Δ| = {mean_lora:.6e}")
+            print("==========================================\n")
+
 
     ckpt_path = os.path.join(ckpt_dir, f'policy_last.ckpt')
     torch.save(policy.state_dict(), ckpt_path)
@@ -611,6 +690,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', action='store', type=int, help='seed', required=True)
     parser.add_argument('--num_epochs', action='store', type=int, help='num_epochs', required=True)
     parser.add_argument('--lr', action='store', type=float, help='lr', required=True)
+    parser.add_argument('--load_pretrain', action='store_true', default=False)
 
     # for ACT
     parser.add_argument('--kl_weight', action='store', type=int, help='KL Weight', required=False)

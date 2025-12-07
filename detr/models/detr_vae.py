@@ -236,7 +236,24 @@ def build(args):
     backbone = build_backbone(args)
     backbones.append(backbone)
 
+    # load in pretrained transformer
     transformer = build_transformer(args)
+    # if not args.eval:
+    # filename = "/home/kelly_lucy/Desktop/manipulation_project/Manipulation-Final-Project/src/checkpoints/DL_pretrained_test/policy_best.ckpt"
+    # ckpt = torch.load(filename)
+    # transformer_state = {}
+
+    # for k, v in ckpt.items():
+    #     if k.startswith("model.transformer."):
+    #         new_k = k.replace("model.transformer.", "")
+    #         transformer_state[new_k] = v
+
+    # missing, unexpected = transformer.load_state_dict(transformer_state, strict=False)
+
+    # print("Missing keys:", missing)
+    # print("Unexpected keys:", unexpected)
+
+    # transformer = LoraModel(transformer, lora_config, "default")
 
     encoder = build_encoder(args)
 
@@ -249,8 +266,17 @@ def build(args):
         camera_names=args.camera_names,
     )
 
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print("number of parameters: %.2fM" % (n_parameters/1e6,))
+    # for name, p in model.named_parameters():
+    #     p.requires_grad = False
+
+    # for name, p in model.transformer.named_parameters():
+    #     if "lora_" in name:
+    #         p.requires_grad = True
+
+    # all_params = sum(p.numel() for p in model.parameters())
+    # n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # print("number of parameters: " , (n_parameters,))
+    # print("all params: ", all_params)
 
     return model
 
